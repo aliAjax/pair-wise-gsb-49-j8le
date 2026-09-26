@@ -1,7 +1,18 @@
 """再保险合约与巨灾暴露管理领域规则与状态转换。"""
-from typing import Any, Dict, Iterable, Tuple
+from typing import Any, Dict, Iterable, Optional, Tuple
 
-from .domain import Actor, Conflict, ValidationError, boolean, choice, integer, number, text, text_list
+from .domain import (
+    Actor,
+    Conflict,
+    ReinstatementExhausted,
+    ValidationError,
+    boolean,
+    choice,
+    integer,
+    number,
+    text,
+    text_list,
+)
 
 
 INITIAL_STATE = "quoted"
@@ -33,6 +44,7 @@ class DomainRules:
         number(p, "cession_pct", 0, 1)
         number(p, "loss_amount", 0)
         number(p, "reinstatement_pct", 0, 1)
+        integer(p, "reinstatement_count", 0)
         number(p, "aggregate_prior", 0)
         if limit <= attachment:
             raise ValidationError("赔款限额必须高于起赔点")
@@ -61,6 +73,38 @@ class DomainRules:
         if used + projected > capacity + 0.01:
             raise Conflict("同一事件累计摊回超过再保容量")
 
+    @staticmethod
+    def reinstatement_view(ledger: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """把台账行整理为规则视角的快照：已用/可用/耗尽/累计保费。"""
+        if not ledger:
+            return None
+        total = int(ledger["total_count"])
+        used = int(ledger["used_count"])
+        available = max(0, total - used)
+        return {
+            "event_id": ledger["event_id"],
+            "total_count": total,
+            "used_count": used,
+            "available_count": available,
+            "exhausted": available <= 0,
+            "accumulated_recovery": round(float(ledger["accumulated_recovery"]), 2),
+            "accumulated_premium": round(float(ledger["accumulated_premium"]), 2),
+        }
+
+    def require_reinstatement_available(self, ledger: Dict[str, Any]) -> None:
+        """受理与核定闸门：次数耗尽时明确告知已用、缺少次数与累计保费。
+
+        仅"已结算"案件会消耗次数，因此未结案或已拒赔案件在此之前都不占次数。
+        """
+        if int(ledger["used_count"]) >= int(ledger["total_count"]):
+            raise ReinstatementExhausted(
+                event_id=str(ledger["event_id"]),
+                total_count=int(ledger["total_count"]),
+                used_count=int(ledger["used_count"]),
+                accumulated_premium=float(ledger["accumulated_premium"]),
+                accumulated_recovery=float(ledger["accumulated_recovery"]),
+            )
+
     def require_transition(self, record: Dict[str, Any], action: str) -> str:
         allowed = TRANSITIONS.get(action, {}).get(record["state"])
         if allowed is None:
@@ -78,7 +122,10 @@ class DomainRules:
             summary = "再保合约已绑定"
         elif action == "submit_claim":
             changes["claim_number"] = text(data, "claim_number")
-            changes["claim_event_id"] = text(data, "event_id")
+            claim_event_id = text(data, "event_id")
+            if claim_event_id != str(p.get("event_id", "")):
+                raise ValidationError("赔案事件必须与合约登记事件%s一致" % p.get("event_id"))
+            changes["claim_event_id"] = claim_event_id
             summary = "赔案已提交"
         elif action == "calculate":
             loss = number(data, "approved_loss", 0)

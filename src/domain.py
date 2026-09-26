@@ -7,6 +7,10 @@ class DomainError(Exception):
     status = 400
     code = "domain_error"
 
+    def __init__(self, message: str = "", details: Dict[str, Any] = None) -> None:
+        super().__init__(message)
+        self.details = details
+
 
 class ValidationError(DomainError):
     status = 422
@@ -26,6 +30,28 @@ class Conflict(DomainError):
 class PermissionDenied(DomainError):
     status = 403
     code = "permission_denied"
+
+
+class ReinstatementExhausted(Conflict):
+    """恢复次数耗尽，携带已用、缺少次数与累计保费，便于受理时直接告知。"""
+
+    code = "reinstatement_exhausted"
+
+    def __init__(self, event_id: str, total_count: int, used_count: int, accumulated_premium: float, accumulated_recovery: float = 0.0, needed: int = 1) -> None:
+        available = max(0, int(total_count) - int(used_count))
+        short = max(0, int(needed) - available)
+        message = "事件%s恢复次数已耗尽：已用%s/%s次，缺少%s次，累计恢复保费%.2f" % (
+            event_id, used_count, total_count, short, float(accumulated_premium),
+        )
+        super().__init__(message, details={
+            "event_id": event_id,
+            "total_count": int(total_count),
+            "used_count": int(used_count),
+            "available_count": available,
+            "short_count": short,
+            "accumulated_premium": round(float(accumulated_premium), 2),
+            "accumulated_recovery": round(float(accumulated_recovery), 2),
+        })
 
 
 @dataclass(frozen=True)

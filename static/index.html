@@ -5,29 +5,202 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>再保险合约与巨灾暴露管理</title>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 2rem; color: #17212b; }
-    main { max-width: 960px; margin: auto; }
-    button { padding: .55rem .9rem; cursor: pointer; }
-    pre { background: #f4f6f8; padding: 1rem; overflow: auto; border-radius: 8px; }
-    .row { display: flex; gap: 1rem; align-items: center; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 2rem; color: #17212b; background: #f7f8fa; }
+    main { max-width: 1040px; margin: auto; }
+    h1 { font-size: 1.4rem; }
+    h2 { font-size: 1.05rem; margin: 1.4rem 0 .6rem; }
+    button { padding: .5rem .9rem; cursor: pointer; border: 1px solid #34577a; background: #34577a; color: #fff; border-radius: 6px; }
+    button.secondary { background: #fff; color: #34577a; }
+    .row { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem; }
+    table { border-collapse: collapse; width: 100%; background: #fff; font-size: .88rem; }
+    th, td { border: 1px solid #dde3e8; padding: .45rem .6rem; text-align: left; }
+    th { background: #eef2f6; }
+    tr.clickable { cursor: pointer; }
+    tr.clickable:hover { background: #f0f5fa; }
+    .card { background: #fff; border: 1px solid #dde3e8; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
+    .kv { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: .35rem 1rem; font-size: .88rem; }
+    .kv div span { color: #66757f; margin-right: .35rem; }
+    .badge { display: inline-block; padding: .1rem .55rem; border-radius: 999px; font-size: .78rem; }
+    .badge.ok { background: #e3f6e8; color: #1c7a38; }
+    .badge.exhausted { background: #fdecea; color: #b3261e; }
+    .badge.state { background: #e8eef5; color: #2b4a67; }
+    .muted { color: #66757f; font-size: .85rem; }
+    .num { text-align: right; font-variant-numeric: tabular-nums; }
+    pre { background: #1e2833; color: #d7e3ee; padding: 1rem; overflow: auto; border-radius: 8px; font-size: .8rem; }
   </style>
 </head>
 <body>
 <main>
-  <h1>再保险合约与巨灾暴露管理</h1>
-  <p>最小演示页。完整业务流程通过README中的JSON接口调用。</p>
-  <div class="row"><button id="load">加载记录</button><button id="stats">查看状态统计</button></div>
-  <pre id="output">点击上方按钮读取服务状态。</pre>
+  <h1>再保险合约与巨灾暴露管理 · 恢复台账</h1>
+  <div class="row">
+    <button id="load">加载记录</button>
+    <button id="loadLedgers" class="secondary">加载恢复台账</button>
+    <button id="stats" class="secondary">状态统计</button>
+  </div>
+  <div id="view"></div>
 </main>
 <script>
 const headers = {"X-User-Id":"demo-admin","X-Role":"admin","X-Org":"demo"};
-async function show(path) {
-  const response = await fetch(path, {headers});
+const view = () => document.getElementById("view");
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const money = (n) => (Number(n) || 0).toLocaleString("zh-CN", {minimumFractionDigits: 2, maximumFractionDigits: 2});
+
+async function getJSON(path, options) {
+  const response = await fetch(path, Object.assign({headers}, options));
   const data = await response.json();
-  document.getElementById("output").textContent = JSON.stringify(data, null, 2);
+  if (!response.ok) throw Object.assign(new Error(data.message || "请求失败"), {payload: data});
+  return data;
 }
-document.getElementById("load").onclick = () => show("/api/records?limit=20");
-document.getElementById("stats").onclick = () => show("/api/stats");
+
+function ledgerBadge(ledger) {
+  if (!ledger) return '<span class="muted">无台账</span>';
+  const cls = ledger.exhausted ? "exhausted" : "ok";
+  const label = ledger.exhausted ? "已耗尽" : "可恢复";
+  return `<span class="badge ${cls}">${label}</span> ${esc(ledger.used_count)}/${esc(ledger.total_count)}次 · 累计保费 ${money(ledger.accumulated_premium)}`;
+}
+
+async function showList() {
+  const items = (await getJSON("/api/records?limit=100")).items;
+  view().innerHTML = `
+    <h2>记录（点击查看详情）</h2>
+    <table>
+      <thead><tr><th>ID</th><th>引用</th><th>状态</th><th>事件</th><th class="num">摊回金额</th><th class="num">恢复保费</th><th>恢复次数台账</th></tr></thead>
+      <tbody>
+        ${items.map(r => `
+          <tr class="clickable" data-id="${r.id}">
+            <td>${r.id}</td>
+            <td>${esc(r.reference)}</td>
+            <td><span class="badge state">${esc(r.state)}</span></td>
+            <td>${esc(r.payload.event_id)}</td>
+            <td class="num">${money(r.payload.recoverable_amount)}</td>
+            <td class="num">${money(r.payload.reinstatement_premium)}</td>
+            <td>${ledgerBadge(r.reinstatement)}</td>
+          </tr>`).join("") || '<tr><td colspan="7" class="muted">暂无记录</td></tr>'}
+      </tbody>
+    </table>`;
+  view().querySelectorAll("tr.clickable").forEach(tr => tr.onclick = () => showRecord(Number(tr.dataset.id)));
+}
+
+async function showRecord(id) {
+  const [r, audit] = await Promise.all([
+    getJSON(`/api/records/${id}`),
+    getJSON(`/api/records/${id}/audit`),
+  ]);
+  const l = r.reinstatement;
+  view().innerHTML = `
+    <div class="row"><button class="secondary" id="back">← 返回列表</button></div>
+    <div class="card">
+      <h2 style="margin-top:0">记录 #${r.id} · ${esc(r.reference)} <span class="badge state">${esc(r.state)}</span></h2>
+      <div class="kv">
+        <div><span>事件</span>${esc(r.payload.event_id)}</div>
+        <div><span>起赔点 / 限额</span>${money(r.payload.attachment)} / ${money(r.payload.limit)}</div>
+        <div><span>分出比例</span>${esc(r.payload.cession_pct)}</div>
+        <div><span>摊回金额</span>${money(r.payload.recoverable_amount)}</div>
+        <div><span>恢复保费比例</span>${(r.payload.reinstatement_pct * 100).toFixed(1)}%</div>
+        <div><span>本案恢复保费</span>${money(r.payload.reinstatement_premium)}</div>
+      </div>
+    </div>
+    <div class="card">
+      <h2 style="margin-top:0">恢复台账（按事件 ${l ? esc(l.event_id) : "-"}）
+        <button class="secondary" id="ledgerDetail" style="margin-left:.6rem">查看逐笔消耗</button>
+      </h2>
+      ${l ? `
+      <div class="kv">
+        <div><span>已登记可用次数</span>${l.total_count}</div>
+        <div><span>已用次数</span>${l.used_count}</div>
+        <div><span>剩余次数</span>${l.available_count}</div>
+        <div><span>状态</span>${ledgerBadge(l)}</div>
+        <div><span>累计摊回</span>${money(l.accumulated_recovery)}</div>
+        <div><span>累计恢复保费</span>${money(l.accumulated_premium)}</div>
+      </div>
+      <p class="muted">次数仅在结算时消耗；未结算或拒赔案件不占用次数。耗尽后新案无法受理或核定。</p>` : '<p class="muted">无台账数据</p>'}
+    </div>
+    <div class="card">
+      <h2 style="margin-top:0">审计时间线</h2>
+      <table>
+        <thead><tr><th>版本</th><th>动作</th><th>时间</th><th>说明</th></tr></thead>
+        <tbody>${audit.items.map(e => `
+          <tr><td>${e.version}</td><td>${esc(e.action)}</td><td>${esc(e.created_at)}</td>
+          <td>${esc(e.details.summary || "")}${e.details.reinstatement ? ` <span class="muted">第${e.details.reinstatement.seq}次恢复，保费 ${money(e.details.reinstatement.reinstatement_premium)}</span>` : ""}</td></tr>
+        `).join("")}</tbody>
+      </table>
+    </div>`;
+  document.getElementById("back").onclick = showList;
+  if (l) document.getElementById("ledgerDetail").onclick = () => showLedger(l.event_id);
+}
+
+function entriesTable(entries) {
+  return `
+    <table>
+      <thead><tr><th>序次</th><th>记录ID</th><th class="num">摊回金额</th><th class="num">恢复保费</th><th>支付凭证</th><th>操作人</th><th>时间</th></tr></thead>
+      <tbody>
+        ${entries.map(e => `
+          <tr class="clickable" data-id="${e.record_id}">
+            <td>${e.seq}</td><td>#${e.record_id}</td>
+            <td class="num">${money(e.recovery_amount)}</td>
+            <td class="num">${money(e.reinstatement_premium)}</td>
+            <td>${esc(e.payment_reference)}</td><td>${esc(e.created_by)}</td><td>${esc(e.created_at)}</td>
+          </tr>`).join("") || '<tr><td colspan="7" class="muted">尚无结算消耗</td></tr>'}
+      </tbody>
+    </table>`;
+}
+
+async function showLedgers() {
+  const items = (await getJSON("/api/reinstatements")).items;
+  view().innerHTML = `
+    <h2>恢复台账（按巨灾事件登记）</h2>
+    <table>
+      <thead><tr><th>事件</th><th>已用/登记</th><th>剩余</th><th>状态</th><th class="num">累计摊回</th><th class="num">累计恢复保费</th><th></th></tr></thead>
+      <tbody>
+        ${items.map(l => `
+          <tr>
+            <td>${esc(l.event_id)}</td>
+            <td>${l.used_count} / ${l.total_count}</td>
+            <td>${l.available_count}</td>
+            <td>${ledgerBadge(l)}</td>
+            <td class="num">${money(l.accumulated_recovery)}</td>
+            <td class="num">${money(l.accumulated_premium)}</td>
+            <td><button class="secondary" data-event="${esc(l.event_id)}">明细</button></td>
+          </tr>`).join("") || '<tr><td colspan="7" class="muted">暂无台账</td></tr>'}
+      </tbody>
+    </table>`;
+  view().querySelectorAll("button[data-event]").forEach(btn => btn.onclick = () => showLedger(btn.dataset.event));
+}
+
+async function showLedger(eventId) {
+  const l = await getJSON(`/api/reinstatements/${encodeURIComponent(eventId)}`);
+  view().innerHTML = `
+    <div class="row">
+      <button class="secondary" id="back">← 返回台账列表</button>
+    </div>
+    <div class="card">
+      <h2 style="margin-top:0">事件 ${esc(l.event_id)} 的恢复台账</h2>
+      <div class="kv">
+        <div><span>登记可用次数</span>${l.total_count}</div>
+        <div><span>已用次数</span>${l.used_count}</div>
+        <div><span>缺少次数（新案）</span>${l.exhausted ? 1 : 0}</div>
+        <div><span>状态</span>${ledgerBadge(l)}</div>
+        <div><span>累计摊回</span>${money(l.accumulated_recovery)}</div>
+        <div><span>累计恢复保费</span>${money(l.accumulated_premium)}</div>
+      </div>
+    </div>
+    <div class="card">
+      <h2 style="margin-top:0">逐次消耗明细（服务重开后仍可核对）</h2>
+      ${entriesTable(l.entries)}
+    </div>`;
+  document.getElementById("back").onclick = showLedgers;
+  view().querySelectorAll("tr.clickable").forEach(tr => tr.onclick = () => showRecord(Number(tr.dataset.id)));
+}
+
+async function showStats() {
+  const stats = await getJSON("/api/stats");
+  view().innerHTML = `<h2>状态统计</h2><pre>${esc(JSON.stringify(stats, null, 2))}</pre>`;
+}
+
+document.getElementById("load").onclick = () => showList().catch(e => view().textContent = e.message);
+document.getElementById("loadLedgers").onclick = () => showLedgers().catch(e => view().textContent = e.message);
+document.getElementById("stats").onclick = () => showStats().catch(e => view().textContent = e.message);
+showList().catch(() => { view().innerHTML = '<p class="muted">服务未启动或暂无数据。先通过 JSON 接口创建记录。</p>'; });
 </script>
 </body>
 </html>
