@@ -16,7 +16,8 @@
 <main>
   <h1>再保险合约与巨灾暴露管理</h1>
   <p>最小演示页。完整业务流程通过README中的JSON接口调用。</p>
-  <div class="row"><button id="load">加载记录</button><button id="stats">查看状态统计</button></div>
+  <div class="row"><button id="load">加载记录</button><button id="stats">查看状态统计</button><button id="ledger">恢复台账</button></div>
+  <div class="row"><input id="recordId" type="number" min="1" value="1" placeholder="记录ID"><button id="detail">查看记录详情</button></div>
   <pre id="output">点击上方按钮读取服务状态。</pre>
 </main>
 <script>
@@ -28,6 +29,8 @@ async function show(path) {
 }
 document.getElementById("load").onclick = () => show("/api/records?limit=20");
 document.getElementById("stats").onclick = () => show("/api/stats");
+document.getElementById("ledger").onclick = () => show("/api/reinstatements");
+document.getElementById("detail").onclick = () => show("/api/records/" + encodeURIComponent(document.getElementById("recordId").value));
 </script>
 </body>
 </html>

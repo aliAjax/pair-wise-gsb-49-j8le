@@ -4,7 +4,7 @@ import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from .domain import Actor, DomainError, PermissionDenied, ValidationError
 
@@ -12,6 +12,7 @@ from .domain import Actor, DomainError, PermissionDenied, ValidationError
 RECORD_RE = re.compile(r"^/api/records/(\d+)$")
 ACTION_RE = re.compile(r"^/api/records/(\d+)/actions/([a-z_]+)$")
 AUDIT_RE = re.compile(r"^/api/records/(\d+)/audit$")
+REINSTATEMENT_RE = re.compile(r"^/api/reinstatements/([^/]+)$")
 
 
 def make_handler(service: Any, static_dir: Path):
@@ -75,6 +76,13 @@ def make_handler(service: Any, static_dir: Path):
                     query = parse_qs(parsed.query)
                     records = service.list_records(self._actor(), state=query.get("state", [None])[0], limit=int(query.get("limit", ["100"])[0]))
                     self._send(200, {"items": records})
+                    return
+                if parsed.path == "/api/reinstatements":
+                    self._send(200, {"items": service.list_reinstatements(self._actor())})
+                    return
+                match = REINSTATEMENT_RE.match(parsed.path)
+                if match:
+                    self._send(200, service.reinstatement_detail(self._actor(), unquote(match.group(1))))
                     return
                 match = RECORD_RE.match(parsed.path)
                 if match:
